@@ -41,16 +41,9 @@ bool isStreaming = true;
 bool isImageFlipped = false;
 bool isClientConnected = false;
 unsigned long lastClientActivity = 0;
-bool shouldRestartStream = false;
 
 // 创建HTTP服务器
 httpd_handle_t stream_httpd = NULL;
-
-// 流媒体相关定义
-#define PART_BOUNDARY "123456789000000000000987654321"
-static const char* _STREAM_CONTENT_TYPE = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
-static const char* _STREAM_BOUNDARY = "\r\n--" PART_BOUNDARY "\r\n";
-static const char* _STREAM_PART = "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n";
 
 // 主页HTML
 static const char PROGMEM INDEX_HTML[] = R"rawliteral(
@@ -262,7 +255,10 @@ static esp_err_t client_close_handler(httpd_req_t *req) {
 
 // 处理状态请求
 static esp_err_t status_handler(httpd_req_t *req) {
+  // 收到状态请求即视为客户端活跃
+  isClientConnected = true;
   lastClientActivity = millis();
+
   char status_json[150];
   snprintf(status_json, sizeof(status_json), 
            "{\"ledStatus\":\"%s\",\"flipStatus\":\"%s\",\"streamStatus\":\"%s\"}", 
@@ -277,14 +273,8 @@ static esp_err_t status_handler(httpd_req_t *req) {
 
 // 处理动作请求
 static esp_err_t action_handler(httpd_req_t *req) {
-  // 验证请求是否来自活动客户端
-  if (!isClientConnected) {
-    Serial.println("拒绝非活动客户端的请求");
-    const char* resp_str = "Client not active";
-    httpd_resp_send(req, resp_str, strlen(resp_str));
-    return ESP_FAIL;
-  }
-
+  // 收到动作请求即视为客户端活跃（不再拒绝）
+  isClientConnected = true;
   lastClientActivity = millis();
   
   char* buf;
@@ -314,7 +304,6 @@ static esp_err_t action_handler(httpd_req_t *req) {
           s->set_hmirror(s, isImageFlipped);
           s->set_vflip(s, isImageFlipped);
           Serial.printf("图像已%s翻转\n", isImageFlipped ? "" : "取消");
-          shouldRestartStream = true;
         } else if (strcmp(variable, "led") == 0) {
           isLedOn = !isLedOn;
           digitalWrite(LED_PIN, isLedOn ? HIGH : LOW);
@@ -329,85 +318,62 @@ static esp_err_t action_handler(httpd_req_t *req) {
   return httpd_resp_send(req, NULL, 0);
 }
 
-// 处理视频流请求
+// 处理视频流请求（修改为每次只发送一帧 JPEG）
 static esp_err_t stream_handler(httpd_req_t *req) {
   lastClientActivity = millis();
-  
+  isClientConnected = true;
+
+  if (!isStreaming) {
+    // 如果流已停止，返回 204 No Content
+    httpd_resp_set_status(req, "204 No Content");
+    return httpd_resp_send(req, NULL, 0);
+  }
+
   camera_fb_t *fb = NULL;
   esp_err_t res = ESP_OK;
   size_t _jpg_buf_len = 0;
   uint8_t *_jpg_buf = NULL;
-  char part_buf[64];
-  
-  res = httpd_resp_set_type(req, _STREAM_CONTENT_TYPE);
+
+  fb = esp_camera_fb_get();
+  if (!fb) {
+    Serial.println("摄像头捕获失败");
+    httpd_resp_send_500(req);
+    return ESP_FAIL;
+  }
+
+  if (fb->format != PIXFORMAT_JPEG) {
+    bool jpeg_converted = frame2jpg(fb, 80, &_jpg_buf, &_jpg_buf_len);
+    esp_camera_fb_return(fb);
+    fb = NULL;
+    if (!jpeg_converted) {
+      Serial.println("JPEG转换失败");
+      httpd_resp_send_500(req);
+      return ESP_FAIL;
+    }
+  } else {
+    _jpg_buf_len = fb->len;
+    _jpg_buf = fb->buf;
+  }
+
+  res = httpd_resp_set_type(req, "image/jpeg");
   if (res != ESP_OK) {
-    Serial.println("设置流媒体类型失败");
+    if (fb) esp_camera_fb_return(fb);
+    else if (_jpg_buf) free(_jpg_buf);
     return res;
   }
-  
-  while (true) {
-    if (!isStreaming) {
-      Serial.println("视频流已暂停");
-      break;
-    }
-    
-    fb = esp_camera_fb_get();
-    if (!fb) {
-      Serial.println("摄像头捕获失败");
-      res = ESP_FAIL;
-    } else {
-      if (fb->format != PIXFORMAT_JPEG) {
-        bool jpeg_converted = frame2jpg(fb, 80, &_jpg_buf, &_jpg_buf_len);
-        esp_camera_fb_return(fb);
-        fb = NULL;
-        if (!jpeg_converted) {
-          Serial.println("JPEG转换失败");
-          res = ESP_FAIL;
-        }
-      } else {
-        _jpg_buf_len = fb->len;
-        _jpg_buf = fb->buf;
-      }
-    }
-    
-    if (res == ESP_OK) {
-      size_t hlen = snprintf(part_buf, 64, _STREAM_PART, _jpg_buf_len);
-      res = httpd_resp_send_chunk(req, part_buf, hlen);
-    }
-    if (res == ESP_OK) {
-      res = httpd_resp_send_chunk(req, (const char *)_jpg_buf, _jpg_buf_len);
-    }
-    if (res == ESP_OK) {
-      res = httpd_resp_send_chunk(req, _STREAM_BOUNDARY, strlen(_STREAM_BOUNDARY));
-    }
-    
-    if (fb) {
-      esp_camera_fb_return(fb);
-      fb = NULL;
-      _jpg_buf = NULL;
-    } else if (_jpg_buf) {
-      free(_jpg_buf);
-      _jpg_buf = NULL;
-    }
-    
-    if (res != ESP_OK) {
-      Serial.println("发送流数据失败");
-      break;
-    }
-    
-    // 检查是否需要重启流（如图像翻转后）
-    if (shouldRestartStream) {
-      shouldRestartStream = false;
-      break;
-    }
-    
-    // 检查客户端是否仍然活跃
-    if (millis() - lastClientActivity > 5000) { // 5秒无活动
-      Serial.println("客户端活动超时");
-      break;
-    }
+  httpd_resp_set_hdr(req, "Content-Disposition", "inline; filename=capture.jpg");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+
+  res = httpd_resp_send(req, (const char *)_jpg_buf, _jpg_buf_len);
+
+  if (fb) {
+    esp_camera_fb_return(fb);
+    fb = NULL;
+  } else if (_jpg_buf) {
+    free(_jpg_buf);
+    _jpg_buf = NULL;
   }
-  
+
   return res;
 }
 
@@ -481,8 +447,9 @@ void startCameraServer() {
   
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.server_port = SERVER_PORT;
-  config.ctrl_port = SERVER_PORT;
-  config.max_open_sockets = 3;
+  // 增加最大 socket 数量，避免快速请求时连接被占满
+  config.max_open_sockets = 7;
+  config.lru_purge_enable = true;
   
   httpd_uri_t index_uri = {
     .uri = "/",
