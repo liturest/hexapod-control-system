@@ -3,10 +3,10 @@
 
 基于 Arduino Mega 2560 与 ESP32 的 18 自由度六足机器人控制系统，集成三角步态算法、AI 语音交互、WiFi 实时视频流、多传感器环境感知等功能。
 
-## 📋 目录
+该代码（main.cpp & ESP32-CAM code.cpp ）已在中国获得计算机软件著作权，登记号：2026SR0585187
 
+## 📋 目录
 - [功能特点](#功能特点)
-- [硬件架构](#硬件架构)
 - [引脚连接](#引脚连接)
 - [软件架构](#软件架构)
 - [安装与烧录](#安装与烧录)
@@ -46,27 +46,7 @@
 - **OLED 屏幕**：128×64 SSD1306，自定义中文字库
 - **状态反馈**：实时显示传感器数据与系统状态
 
-## 🔧 硬件架构
-┌─────────────────────────────────────────────────┐
-│ Arduino Mega 2560 (主控) │
-│ · 状态机管理 · 步态生成 · 舵机控制 │
-│ · 传感器采集 · OLED显示 · 红外接收 │
-└──────┬──────────────────────────────┬────────────┘
-│ UART/I2C │ PWM×18
-▼ ▼
-┌──────┴──────────┐ ┌──────┴──────────┐
-│ ESP32-WROOM-32 │ │ 18× MG996R 舵机 │
-│ · AI语音交互 │ │ · Coxa×6 │
-│ · 百度/阿里API │ │ · Femur×6 │
-└─────────────────┘ │ · Tibia×6 │
-└─────────────────┘
-┌─────────────────┐
-│ ESP32-CAM │
-│ · WiFi视频流 │
-│ · OV2640摄像头 │
-└─────────────────┘
 
-text
 
 ### 硬件清单
 
@@ -88,7 +68,7 @@ text
 ### 供电方案
 
 - **舵机供电**：3S 锂电池组（12.6V）→ 3×XL4015（并联均流）→ 5V/15A(额定)
-- **主控供电**：9V 电池 → Arduino Mega DC 接口
+- **主控供电**：3S电池 → Arduino Mega DC 接口
 - **保护措施**：1000μF 电容（尖峰抑制）+ 8W 1Ω 均流电阻 + BMS 保护板
 
 ## 🔌 引脚连接
@@ -102,12 +82,10 @@ text
 | D22 ~ D40 | 传感器 IO | 超声波/人体/气体等 |
 
 
-text
 
 ### 核心算法
 
 #### 1. 状态机 (State Machine)
-```cpp
 enum RobotState {
   INIT,       // 初始化
   IDLE,       // 待命
@@ -125,57 +103,52 @@ enum RobotState {
 
 抬腿高度使用正弦函数实现平滑运动
 
-text
+
 gaitPhase = (gaitPhase + 10) % 360
 腿组A: phase = gaitPhase
 腿组B: phase = (gaitPhase + 180) % 360
 3. 舵机安全机制
-cpp
+
 // 角度限位
 int minAngles[18] = {...};  // 最小角度
 int maxAngles[18] = {...};  // 最大角度
 angle = constrain(angle, minAngles[i], maxAngles[i]);
 📦 安装与烧录
 环境要求
-Arduino IDE (1.8.x 或 2.x)
+Arduino IDE (1.8.x 或 2.x或更高)
 
 安装开发板支持：
 
 Arduino Mega 2560 (默认支持)
 
 ESP32 开发板：文件 → 首选项 → 附加开发板管理器网址
-
-text
-https://espressif.github.io/arduino-esp32/package_esp32_index.json
+https://espressif.github.io/arduino-esp32/package_esp32_index.json](https://arduino.me/packages/esp32.json
+https://dl.espressif.cn/dl/package_esp32_index.json
+https://espressif.github.io/arduino-esp32/package_esp32_index.json)
 安装依赖库
 在 Arduino IDE 库管理器中搜索安装：
 
-text
 Servo          (Arduino 内置)
 IRremote       (红外遥控)
 U8g2           (OLED 显示)
 DHT sensor library
 WiFi           (ESP32 内置)
 ESPAsyncWebServer
+Arduino Json
+esp32 By Espressif System
+
 烧录步骤
 Arduino Mega 2560 主控
 
-text
-1. 打开 hexapod-control-system/main.cpp
-2. 选择开发板: Tools → Board → Arduino Mega or Mega 2560
-3. 选择端口 → 上传
-ESP32-WROOM-32 (AI模块)
-
-text
 1. 打开 hexapod-control-system/ESP 32-CAM code.cpp
-2. 选择开发板: ESP32 Dev Module
-3. 修改 API Key (见下文)
+2. 选择开发板: AI Thinker ESP32-CAM
+3. 修改 WIFI-SSID & Password(见下文)
 4. 选择端口 → 上传
 ESP32-CAM (摄像头模块)
 
 🎮 使用说明
 开机自检
-装入 3 节 18650 电池和 9V 电池
+装入 3 节 18650 电池
 
 上电后腿部自动内收，2 秒后展开至 HOME 位置
 
@@ -188,8 +161,7 @@ ESP32-CAM (摄像头模块)
 ◄	左转
 ►	右转
 OK	停止
-1	AI 语音模式
-2	避障模式
+1	避障模式
 观看实时视频
 连接 WiFi 热点：ESP32_CAM (密码是：123456)
 
@@ -199,7 +171,6 @@ OK	停止
 
 📐 运动算法详解
 抬腿高度 (正弦平滑)
-text
 radPhase = (phase × 2π) / 360
 liftHeight = stepHeight × (1 - cos(radPhase)) / 2
 phase = 0°: liftHeight = 0 (腿着地)
@@ -207,7 +178,6 @@ phase = 0°: liftHeight = 0 (腿着地)
 phase = 180°: liftHeight = stepHeight (腿最高)
 
 Coxa 关节前进步态
-text
 angleOffset = (stepLength / 2) × cos(radPhase)
 finalAngle = homeAngle + angleOffset
 phase = 0°: 腿向前最大
@@ -215,33 +185,28 @@ phase = 0°: 腿向前最大
 phase = 180°: 腿向后最大
 
 超声波测距
-text
 distance = (pulseTime × 340) / (2 × 10000)
 安全距离：40cm
 
 检测到障碍物 → 停止 → 转向 → 继续检测
 
 转弯步态
-text
 左转: 前左腿向前偏, 后左腿向后偏
 右转: 前右腿向前偏, 后右腿向后偏
 angleOffset = (turnAngle / 2) × cos(radPhase)
 🛠 二次开发
 可调参数 (gait_control.h)
-cpp
 #define STEP_HEIGHT   15    // 抬腿高度 (度)
 #define STEP_LENGTH   20    // 步幅长度 (度)
 #define GAIT_SPEED    10    // 步态速度 (度/帧)
 #define TURN_ANGLE    15    // 转弯角度 (度)
 #define SAFE_DISTANCE 40    // 超声波安全距离 (cm)
 自定义运动函数
-cpp
 // 在 gait_control.cpp 中添加新的运动模式
 void customGait() {
   // 你的自定义步态代码
 }
 修改固定角度 (getFixAngles 函数)
-cpp
 angles[LEG_1][COXA]  = homeAngles[LEG_1][COXA] + offset;
 angles[LEG_1][FEMUR] = homeAngles[LEG_1][FEMUR] + offset;
 angles[LEG_1][TIBIA] = homeAngles[LEG_1][TIBIA] + offset;
